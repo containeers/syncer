@@ -18,6 +18,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/log"
 
 	syncerv1alpha1 "github.com/containeers/syncer/api/v1alpha1"
+	"k8s.io/apimachinery/pkg/api/meta"
 )
 
 // ConfigMapSyncReconciler reconciles a ConfigMapSync object
@@ -136,26 +137,26 @@ func (r *ConfigMapSyncReconciler) syncConfigMap(ctx context.Context, source *cor
 }
 
 func (r *ConfigMapSyncReconciler) updateStatus(cs *syncerv1alpha1.ConfigMapSync, syncErr error) {
-	status := "True"
+	status := metav1.ConditionTrue
 	reason := "SyncSuccessful"
 	message := "Successfully synced ConfigMaps to target namespaces"
 
 	if syncErr != nil {
-		status = "False"
+		status = metav1.ConditionFalse
 		reason = "SyncFailed"
 		message = fmt.Sprintf("Failed to sync ConfigMaps: %v", syncErr)
 	}
 
-	condition := metav1.Condition{
+	// Update the Ready condition
+	meta.SetStatusCondition(&cs.Status.Conditions, metav1.Condition{
 		Type:               "Ready",
 		Status:             status,
 		Reason:             reason,
 		Message:            message,
 		LastTransitionTime: metav1.Now(),
-	}
+	})
 
-	// Update conditions
-	cs.Status.Conditions = []metav1.Condition{condition}
+	// Update last sync time
 	cs.Status.LastSyncTime = &metav1.Time{Time: time.Now()}
 }
 

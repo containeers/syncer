@@ -11,6 +11,7 @@ import (
 
 	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
+	"k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	ctrl "sigs.k8s.io/controller-runtime"
@@ -148,26 +149,26 @@ func (r *SecretSyncReconciler) syncSecret(ctx context.Context, source *corev1.Se
 }
 
 func (r *SecretSyncReconciler) updateStatus(ss *syncerv1alpha1.SecretSync, syncErr error) {
-	status := "True"
+	status := metav1.ConditionTrue
 	reason := "SyncSuccessful"
 	message := "Successfully synced Secrets to target namespaces"
 
 	if syncErr != nil {
-		status = "False"
+		status = metav1.ConditionFalse
 		reason = "SyncFailed"
 		message = fmt.Sprintf("Failed to sync Secrets: %v", syncErr)
 	}
 
-	condition := metav1.Condition{
+	// Update the Ready condition
+	meta.SetStatusCondition(&ss.Status.Conditions, metav1.Condition{
 		Type:               "Ready",
 		Status:             status,
 		Reason:             reason,
 		Message:            message,
 		LastTransitionTime: metav1.Now(),
-	}
+	})
 
-	// Update conditions
-	ss.Status.Conditions = []metav1.Condition{condition}
+	// Update last sync time
 	ss.Status.LastSyncTime = &metav1.Time{Time: time.Now()}
 }
 
