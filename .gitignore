@@ -1,0 +1,59 @@
+# Binaries for programs and plugins
+*.exe
+*.exe~
+*.dll
+*.so
+*.dylib
+bin/
+testbin/
+
+# Test binary, built with `go test -c`
+*.test
+
+# Output of the go coverage tool
+*.out
+*.cov
+
+# Generated Kubernetes files
+/config/crd/bases/
+/config/rbac/role.yaml
+/config/webhook/
+/config/certmanager/
+
+# Build files
+build/
+dist/
+
+# Dependency directories
+vendor/
+
+# IDE specific files
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+
+# Operator-SDK generated files
+bundle/
+bundle.Dockerfile
+
+# Local development files
+.env
+.envrc
+*.log
+
+# Test coverage
+cover.html
+cover.out
+
+# Temporary files
+tmp/
+temp/
+
+# Generated code - except deepcopy
+**/zz_generated.*.go
+!**/zz_generated.deepcopy.go
+
+# OS specific
+.DS_Store

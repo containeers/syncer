@@ -1,0 +1,29 @@
+# This kustomization.yaml is not intended to be run by itself,
+# since it depends on service name and namespace that are out of this kustomize package.
+# It should be run by config/default
+resources:
+- bases/syncer.containeers.com_configmapsyncs.yaml
+- bases/syncer.containeers.com_secretsyncs.yaml
+# +kubebuilder:scaffold:crdkustomizeresource
+
+# Uncomment if you want to add webhooks in the future
+#patches:
+#- patches/webhook_in_configmapsyncs.yaml
+#- patches/webhook_in_secretsyncs.yaml
+
+# [CERTMANAGER] To enable cert-manager, uncomment all sections with 'CERTMANAGER'
+#- patches/cainjection_in_configmapsyncs.yaml
+#- patches/cainjection_in_secretsyncs.yaml
+
+# [WEBHOOK] To enable webhook, uncomment all the sections with [WEBHOOK] prefix including the one in crd/kustomization.yaml
+#- patches/webhook_in_configmapsyncs.yaml
+#- patches/webhook_in_secretsyncs.yaml
+
+# [CERTMANAGER] To enable cert-manager, uncomment all sections with 'CERTMANAGER' prefix.
+# Uncomment 'CERTMANAGER' sections in crd/kustomization.yaml to enable the CA injection in the admission webhooks.
+# 'CERTMANAGER' needs to be enabled to use ca injection
+#- patches/cainjection_in_configmapsyncs.yaml
+#- patches/cainjection_in_secretsyncs.yaml
+
+#configurations:
+#- kustomizeconfig.yaml
