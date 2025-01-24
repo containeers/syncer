@@ -1,0 +1,53 @@
+ {{- if .Values.rbac.create -}}
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: {{ include "syncer.fullname" . }}
+  labels:
+    {{- include "syncer.labels" . | nindent 4 }}
+rules:
+  # Permissions for our custom resources
+  - apiGroups: ["syncer.containeers.com"]
+    resources: ["configmapsyncs", "secretsyncs"]
+    verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+  - apiGroups: ["syncer.containeers.com"]
+    resources: ["configmapsyncs/status", "secretsyncs/status"]
+    verbs: ["get", "update", "patch"]
+  - apiGroups: ["syncer.containeers.com"]
+    resources: ["configmapsyncs/finalizers", "secretsyncs/finalizers"]
+    verbs: ["update"]
+
+  # Permissions for managing ConfigMaps and Secrets
+  - apiGroups: [""]
+    resources: ["configmaps", "secrets"]
+    verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+
+  # Permissions for watching namespaces
+  - apiGroups: [""]
+    resources: ["namespaces"]
+    verbs: ["get", "list", "watch"]
+
+  # Permissions for leader election
+  - apiGroups: ["coordination.k8s.io"]
+    resources: ["leases"]
+    verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+  - apiGroups: [""]
+    resources: ["events"]
+    verbs: ["create", "patch"]
+
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: {{ include "syncer.fullname" . }}
+  labels:
+    {{- include "syncer.labels" . | nindent 4 }}
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: {{ include "syncer.fullname" . }}
+subjects:
+  - kind: ServiceAccount
+    name: {{ include "syncer.serviceAccountName" . }}
+    namespace: {{ .Release.Namespace }}
+{{- end }}
