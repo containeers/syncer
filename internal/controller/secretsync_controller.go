@@ -14,9 +14,13 @@ import (
 	"k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/apimachinery/pkg/types"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
+	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
+	"sigs.k8s.io/controller-runtime/pkg/handler"
 	"sigs.k8s.io/controller-runtime/pkg/log"
+	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 
 	syncerv1alpha1 "github.com/containeers/syncer/api/v1alpha1"
 )
@@ -52,6 +56,19 @@ func (r *SecretSyncReconciler) Reconcile(ctx context.Context, req ctrl.Request) 
 			return ctrl.Result{}, nil
 		}
 		return ctrl.Result{}, err
+	}
+
+	// Handle deletion
+	if !secretSync.DeletionTimestamp.IsZero() {
+		return r.handleDeletion(ctx, &secretSync)
+	}
+
+	// Add finalizer if it doesn't exist
+	if !controllerutil.ContainsFinalizer(&secretSync, FinalizerName) {
+		controllerutil.AddFinalizer(&secretSync, FinalizerName)
+		if err := r.Update(ctx, &secretSync); err != nil {
+			return ctrl.Result{}, err
+		}
 	}
 
 	// Get target namespaces
@@ -176,6 +193,76 @@ func (r *SecretSyncReconciler) updateStatus(ss *syncerv1alpha1.SecretSync, syncE
 func (r *SecretSyncReconciler) SetupWithManager(mgr ctrl.Manager) error {
 	return ctrl.NewControllerManagedBy(mgr).
 		For(&syncerv1alpha1.SecretSync{}).
-		Owns(&corev1.Secret{}).
+		// Watch for changes in source Secrets
+		Watches(
+			&corev1.Secret{},
+			handler.EnqueueRequestsFromMapFunc(r.findSecretSyncs),
+		).
 		Complete(r)
+}
+
+// findSecretSyncs returns the SecretSync objects that reference the given Secret
+func (r *SecretSyncReconciler) findSecretSyncs(ctx context.Context, obj client.Object) []reconcile.Request {
+	secret := obj.(*corev1.Secret)
+	var secretSyncList syncerv1alpha1.SecretSyncList
+	var requests []reconcile.Request
+
+	if err := r.List(ctx, &secretSyncList); err != nil {
+		return nil
+	}
+
+	for _, ss := range secretSyncList.Items {
+		// Check if this Secret is in the source namespace
+		if ss.Spec.SourceNamespace != secret.Namespace {
+			continue
+		}
+		// Check if this Secret is being synced
+		for _, name := range ss.Spec.Secrets {
+			if name == secret.Name {
+				requests = append(requests, reconcile.Request{
+					NamespacedName: types.NamespacedName{
+						Name:      ss.Name,
+						Namespace: ss.Namespace,
+					},
+				})
+				break
+			}
+		}
+	}
+	return requests
+}
+
+// Add deletion handler
+func (r *SecretSyncReconciler) handleDeletion(ctx context.Context, ss *syncerv1alpha1.SecretSync) (ctrl.Result, error) {
+	if !controllerutil.ContainsFinalizer(ss, FinalizerName) {
+		return ctrl.Result{}, nil
+	}
+
+	// Get target namespaces
+	targetNamespaces, err := r.getTargetNamespaces(ctx, ss)
+	if err != nil {
+		return ctrl.Result{}, err
+	}
+
+	// Delete synced Secrets from target namespaces
+	for _, secretName := range ss.Spec.Secrets {
+		for _, namespace := range targetNamespaces {
+			if err := r.Delete(ctx, &corev1.Secret{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      secretName,
+					Namespace: namespace,
+				},
+			}); err != nil && !apierrors.IsNotFound(err) {
+				return ctrl.Result{}, err
+			}
+		}
+	}
+
+	// Remove finalizer
+	controllerutil.RemoveFinalizer(ss, FinalizerName)
+	if err := r.Update(ctx, ss); err != nil {
+		return ctrl.Result{}, err
+	}
+
+	return ctrl.Result{}, nil
 }

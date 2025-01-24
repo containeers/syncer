@@ -13,12 +13,16 @@ import (
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/apimachinery/pkg/types"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
+	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
 	"sigs.k8s.io/controller-runtime/pkg/log"
+	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 
 	syncerv1alpha1 "github.com/containeers/syncer/api/v1alpha1"
 	"k8s.io/apimachinery/pkg/api/meta"
+	"sigs.k8s.io/controller-runtime/pkg/handler"
 )
 
 // ConfigMapSyncReconciler reconciles a ConfigMapSync object
@@ -52,6 +56,19 @@ func (r *ConfigMapSyncReconciler) Reconcile(ctx context.Context, req ctrl.Reques
 			return ctrl.Result{}, nil
 		}
 		return ctrl.Result{}, err
+	}
+
+	// Handle deletion
+	if !configMapSync.DeletionTimestamp.IsZero() {
+		return r.handleDeletion(ctx, &configMapSync)
+	}
+
+	// Add finalizer if it doesn't exist
+	if !controllerutil.ContainsFinalizer(&configMapSync, FinalizerName) {
+		controllerutil.AddFinalizer(&configMapSync, FinalizerName)
+		if err := r.Update(ctx, &configMapSync); err != nil {
+			return ctrl.Result{}, err
+		}
 	}
 
 	// Get target namespaces
@@ -89,6 +106,40 @@ func (r *ConfigMapSyncReconciler) Reconcile(ctx context.Context, req ctrl.Reques
 	// Update status on successful sync
 	r.updateStatus(&configMapSync, nil)
 	return ctrl.Result{RequeueAfter: time.Minute * 5}, nil
+}
+
+func (r *ConfigMapSyncReconciler) handleDeletion(ctx context.Context, cs *syncerv1alpha1.ConfigMapSync) (ctrl.Result, error) {
+	if !controllerutil.ContainsFinalizer(cs, FinalizerName) {
+		return ctrl.Result{}, nil
+	}
+
+	// Get target namespaces
+	targetNamespaces, err := r.getTargetNamespaces(ctx, cs)
+	if err != nil {
+		return ctrl.Result{}, err
+	}
+
+	// Delete synced ConfigMaps from target namespaces
+	for _, configMapName := range cs.Spec.ConfigMaps {
+		for _, namespace := range targetNamespaces {
+			if err := r.Delete(ctx, &corev1.ConfigMap{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      configMapName,
+					Namespace: namespace,
+				},
+			}); err != nil && !apierrors.IsNotFound(err) {
+				return ctrl.Result{}, err
+			}
+		}
+	}
+
+	// Remove finalizer
+	controllerutil.RemoveFinalizer(cs, FinalizerName)
+	if err := r.Update(ctx, cs); err != nil {
+		return ctrl.Result{}, err
+	}
+
+	return ctrl.Result{}, nil
 }
 
 func (r *ConfigMapSyncReconciler) getTargetNamespaces(ctx context.Context, cs *syncerv1alpha1.ConfigMapSync) ([]string, error) {
@@ -164,6 +215,41 @@ func (r *ConfigMapSyncReconciler) updateStatus(cs *syncerv1alpha1.ConfigMapSync,
 func (r *ConfigMapSyncReconciler) SetupWithManager(mgr ctrl.Manager) error {
 	return ctrl.NewControllerManagedBy(mgr).
 		For(&syncerv1alpha1.ConfigMapSync{}).
-		Owns(&corev1.ConfigMap{}).
+		// Watch for changes in source ConfigMaps
+		Watches(
+			&corev1.ConfigMap{},
+			handler.EnqueueRequestsFromMapFunc(r.findConfigMapSyncs),
+		).
 		Complete(r)
+}
+
+// findConfigMapSyncs returns the ConfigMapSync objects that reference the given ConfigMap
+func (r *ConfigMapSyncReconciler) findConfigMapSyncs(ctx context.Context, obj client.Object) []reconcile.Request {
+	configMap := obj.(*corev1.ConfigMap)
+	var configMapSyncList syncerv1alpha1.ConfigMapSyncList
+	var requests []reconcile.Request
+
+	if err := r.List(ctx, &configMapSyncList); err != nil {
+		return nil
+	}
+
+	for _, cms := range configMapSyncList.Items {
+		// Check if this ConfigMap is in the source namespace
+		if cms.Spec.SourceNamespace != configMap.Namespace {
+			continue
+		}
+		// Check if this ConfigMap is being synced
+		for _, name := range cms.Spec.ConfigMaps {
+			if name == configMap.Name {
+				requests = append(requests, reconcile.Request{
+					NamespacedName: types.NamespacedName{
+						Name:      cms.Name,
+						Namespace: cms.Namespace,
+					},
+				})
+				break
+			}
+		}
+	}
+	return requests
 }
